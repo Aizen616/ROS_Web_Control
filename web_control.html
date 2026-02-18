@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>Robot Control Dashboard</title>
+
+<!-- External libs -->
+<script src="https://cdn.jsdelivr.net/npm/roslib/build/roslib.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/nipplejs@0.9.0/dist/nipplejs.min.js"></script>
+
+<style>
+:root { --bg:#0b0f1a; --card:#161b2c; --border:#2d364f; --accent:#3b82f6; --danger:#ef4444; --muted:#94a3b8; --mono:monospace; }
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;background:var(--bg);color:#e2e8f0; -webkit-font-smoothing:antialiased;}
+.topbar{display:flex;gap:12px;padding:12px 16px;background:rgba(2,6,23,0.9);align-items:center;border-bottom:1px solid var(--border)}
+.controls{display:flex;gap:10px;align-items:center;flex:1}
+button{background:var(--accent);border:none;padding:9px 14px;border-radius:8px;color:white;font-weight:600;cursor:pointer}
+button.secondary{background:#334155}
+.instructions{font-size:12px;color:var(--muted);margin:8px 16px}
+.status-bar{display:flex;align-items:center;gap:10px;padding:8px 16px;background:#020617;font-size:12px;font-family:var(--mono)}
+.dot{width:10px;height:10px;border-radius:50%;background:#64748b}
+.container{padding:18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--border);padding:14px;border-radius:12px}
+.val-row{display:flex;justify-content:space-between;margin-bottom:8px;font-weight:700}
+input[type=range]{width:100%}
+.joy-container{display:flex;gap:20px;flex-wrap:wrap;justify-content:center;margin-top:10px}
+.joy-zone{width:180px;height:180px;background:#0f172a;border-radius:50%;border:2px solid var(--border);position:relative}
+.joy-label{text-align:center;font-size:13px;color:var(--muted);margin-bottom:8px;font-weight:700}
+.top-actions{display:flex;gap:8px}
+.small{font-size:12px;color:var(--muted)}
+.footer{padding:16px;text-align:center;color:var(--muted);font-size:12px}
+
+/* mobile-specific */
+.mobile-tabs { display: none; gap:8px; }
+.mobile-tab { display:inline-block; padding:6px 10px; border-radius:8px; background:rgba(255,255,255,0.03); color:var(--muted); font-weight:700; cursor:pointer; border:1px solid transparent; }
+.mobile-tab.active { background: var(--accent); color: white; border-color: rgba(255,255,255,0.06); }
+
+/* on small screens collapse into single-panel view */
+@media (max-width: 720px) {
+  .grid { display: block; }
+  .card { margin-bottom: 12px; }
+  .mobile-tabs { display:flex; }
+  /* panels toggled via .hide class */
+  .anglesPanel.hide, .joystickPanel.hide { display: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar" role="banner">
+  <div class="controls">
+    <div style="display:flex;flex-direction:column">
+      <div class="instructions">
+        Last saved ROSBridge IP and port will be used.
+      </div>
+      <!-- mobile tabs visible only on small screens -->
+      <div class="mobile-tabs" id="mobileTabs" aria-hidden="true" style="margin-top:8px">
+        <div id="tabAngles" class="mobile-tab active" onclick="showPanel('angles')">Angles</div>
+        <div id="tabJoy" class="mobile-tab" onclick="showPanel('joystick')">Joystick</div>
+      </div>
+    </div>
+  </div>
+  <div style="flex:1"></div>
+  <div class="top-actions">
+    <button onclick="home()">HOME</button>
+    <button onclick="estop()" style="background:var(--danger)">E-STOP</button>
+  </div>
+</div>
+
+<div class="status-bar" aria-live="polite">
+  <div id="dot" class="dot" style="background:#64748b"></div>
+  <div id="statusText">DISCONNECTED</div>
+  <div style="flex:1"></div>
+  <div class="small">DEG <input id="degToggle" type="checkbox" onchange="updateUI()" style="vertical-align:middle;margin-left:6px"></div>
+</div>
+
+<div class="container">
+  <div class="grid">
+    <!-- Angles panel wrapper -->
+    <div id="anglesPanel" class="anglesPanel">
+      <div class="card" id="anglesCard">
+        <div id="sliderGrid"></div>
+      </div>
+    </div>
+
+    <!-- Joystick panel wrapper -->
+    <div id="joystickPanel" class="joystickPanel">
+      <div class="card">
+        <div style="font-weight:800;margin-bottom:8px">Joystick Control</div>
+        <div class="joy-container">
+          <div>
+            <div class="joy-label">J1 (↔) | J2 (↕)</div>
+            <div id="joyL" class="joy-zone"></div>
+          </div>
+          <div>
+            <div class="joy-label">J3 (↔) | J4 (↕)</div>
+            <div id="joyR" class="joy-zone"></div>
+          </div>
+        </div>
+        <div style="margin-top:12px" class="small">Speed sensitivity and axis invert below.</div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <div style="flex:1">
+            <label class="small">SPEED</label>
+            <input id="speed" type="range" min="0.01" max="0.2" step="0.01" value="0.07">
+          </div>
+          <div style="width:140px">
+            <label class="small">REVERSE</label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+              <label><input id="inv0" type="checkbox">J1</label>
+              <label><input id="inv1" type="checkbox">J2</label>
+              <label><input id="inv2" type="checkbox">J3</label>
+              <label><input id="inv3" type="checkbox">J4</label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height:14px"></div>
+  <div class="grid">
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:8px">Connection Info</div>
+      <div class="small">Current WS URL</div>
+      <div id="currentUrl" style="font-family:var(--mono);margin-top:8px;color:#cfe6ff">—</div>
+      <div style="margin-top:8px">
+        <button onclick="connectROS()">Connect</button>
+        <button onclick="disconnectROS()" class="secondary">Disconnect</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:8px">Quick Actions</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="home()">Home pose</button>
+      </div>
+      <div style="margin-top:10px" class="small">Publish rate: 30Hz. Use sliders or joystick.</div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">This dashboard uses the last saved ROSBridge IP/port. Open from any device on the same network.</div>
+
+<script>
+/* ====== State ====== */
+let ros = null;
+let armTopic = null;
+let connected = false;
+
+let joints = [0,0,0,0];
+let vel = [0,0,0,0];
+const MIN = -1.57, MAX = 1.57;
+let estopActive = false;
+
+/* ====== UI setup ====== */
+const sliderGrid = document.getElementById('sliderGrid');
+for(let i=0;i<4;i++){
+  const card = document.createElement('div');
+  card.className='card';
+  card.innerHTML = `<div class="val-row"><span>Joint ${i+1}</span><span id="v${i}">0.00</span></div>
+    <input id="s${i}" type="range" min="${MIN}" max="${MAX}" step="0.01" value="0">`;
+  sliderGrid.appendChild(card);
+  document.getElementById('s'+i).addEventListener('input', (e)=>{ manualSet(i, e.target.value); });
+}
+
+/* restore last used settings */
+window.addEventListener('load', ()=> {
+  const host = localStorage.getItem('ros_host') || '';
+  const port = localStorage.getItem('ros_port') || '9090';
+  document.getElementById('currentUrl').innerText = `ws://${host}:${port}`;
+
+  // On mobile start with Angles visible, Joystick hidden
+  if(window.innerWidth <= 720){
+    document.getElementById('joystickPanel').classList.add('hide');
+    document.getElementById('mobileTabs').setAttribute('aria-hidden','false');
+    setActiveTab('angles');
+  } else {
+    document.getElementById('mobileTabs').setAttribute('aria-hidden','true');
+  }
+
+  if(host) connectROS();
+});
+
+/* Panel switching (mobile) */
+function showPanel(name){
+  if(name === 'angles'){
+    document.getElementById('anglesPanel').classList.remove('hide');
+    document.getElementById('joystickPanel').classList.add('hide');
+    setActiveTab('angles');
+  } else {
+    document.getElementById('anglesPanel').classList.add('hide');
+    document.getElementById('joystickPanel').classList.remove('hide');
+    setActiveTab('joy');
+  }
+}
+function setActiveTab(which){
+  document.getElementById('tabAngles').classList.toggle('active', which === 'angles');
+  document.getElementById('tabJoy').classList.toggle('active', which === 'joy');
+}
+
+/* adjust visibility on resize */
+window.addEventListener('resize', ()=>{
+  if(window.innerWidth <= 720){
+    // switch to mobile mode if not already
+    if(!document.getElementById('mobileTabs').hasAttribute('aria-hidden') || document.getElementById('mobileTabs').getAttribute('aria-hidden') === 'true'){
+      document.getElementById('joystickPanel').classList.add('hide');
+      document.getElementById('mobileTabs').setAttribute('aria-hidden','false');
+      setActiveTab('angles');
+    }
+  } else {
+    // desktop -> show both
+    document.getElementById('anglesPanel').classList.remove('hide');
+    document.getElementById('joystickPanel').classList.remove('hide');
+    document.getElementById('mobileTabs').setAttribute('aria-hidden','true');
+    // reset tab UI
+    setActiveTab('');
+  }
+});
+
+/* joystick */
+function makeJoy(id, xIdx, yIdx){
+  const zone = document.getElementById(id);
+  const manager = nipplejs.create({zone: zone, mode:'dynamic', color: '#3b82f6', size:120});
+  
+  manager.on('move', (evt, data) => {
+    if(!data.vector) return;
+
+    // custom mapping for joystick → joint directions
+    switch(id){
+      case 'joyL':
+        vel[0] = -data.vector.x; // J1: right- , left+
+        vel[1] = -data.vector.y; // J2: up- , down+
+        break;
+      case 'joyR':
+        vel[2] = -data.vector.x; // J3: right- , left+
+        vel[3] = -data.vector.y;  // J4: up- , down+
+        break;
+    }
+  });
+
+  manager.on('end', ()=>{ 
+    if(id==='joyL'){ vel[0]=0; vel[1]=0; }
+    else if(id==='joyR'){ vel[2]=0; vel[3]=0; }
+  });
+}
+
+makeJoy('joyL',0,1);
+makeJoy('joyR',2,3);
+
+
+/* main loop @30Hz */
+setInterval(()=>{
+  if(estopActive) return;
+  const speed = parseFloat(document.getElementById('speed').value);
+  let moving=false;
+
+  // base velocity mapping to preserve your default joystick behavior
+  const velocityMap = [
+    vel[0],   // J1: right- , left+
+    vel[1],   // J2: top- , bottom+
+    -vel[2],  // J3: right- , left+
+    vel[3]    // J4: top- , bottom+ (fixed)
+  ];
+
+  for(let i=0;i<4;i++){
+    if(velocityMap[i] !== 0){
+      // apply user’s inverse preference at publish-time
+      const mul = document.getElementById('inv'+i).checked ? -1 : 1;
+      joints[i] = Math.max(MIN, Math.min(MAX, joints[i] + velocityMap[i] * speed * mul));
+      moving = true;
+    }
+  }
+
+  if(moving){ 
+    updateUI(); 
+    publish(); 
+  }
+}, 33);
+
+
+/* ====== ROS connection helpers ====== */
+function buildWsUrl(){
+  const host = localStorage.getItem('ros_host') || '';
+  const port = localStorage.getItem('ros_port') || '9090';
+  if(!host) return null;
+  return `ws://${host}:${port}`;
+}
+
+function updateCurrentUrlDisplay(){
+  document.getElementById('currentUrl').innerText = buildWsUrl() || '—';
+}
+
+/* Connect */
+function connectROS(){
+  const url = buildWsUrl();
+  if(!url){ alert('No saved ROSBridge host'); return; }
+
+  // if already connected, disconnect first
+  if(ros && connected){
+    try{ ros.close(); } catch(e){}
+  }
+
+  ros = new ROSLIB.Ros({ url: url });
+
+  ros.on('connection', ()=> {
+    connected = true;
+    document.getElementById('statusText').innerText = 'CONNECTED';
+    document.getElementById('dot').style.background = '#22c55e';
+    document.getElementById('currentUrl').innerText = url;
+    armTopic = new ROSLIB.Topic({ ros: ros, name: '/arm_controller/joint_trajectory', messageType: 'trajectory_msgs/JointTrajectory' });
+  });
+
+  ros.on('error', (err)=> {
+    console.warn('ROS connection error', err);
+    document.getElementById('statusText').innerText = 'ERROR';
+    document.getElementById('dot').style.background = '#ffb020';
+  });
+
+  ros.on('close', ()=> {
+    connected = false;
+    document.getElementById('statusText').innerText = 'DISCONNECTED';
+    document.getElementById('dot').style.background = '#ef4444';
+    armTopic = null;
+  });
+
+  document.getElementById('statusText').innerText = 'CONNECTING...';
+  document.getElementById('dot').style.background = '#64748b';
+}
+
+/* Disconnect */
+function disconnectROS(){
+  if(ros){
+    try{ ros.close(); }catch(e){}
+  }
+}
+
+/* publish trajectory */
+function publish(){
+  if(!armTopic || !connected) return;
+  const msg = {
+    joint_names: ['joint1','joint2','joint3','joint4'],
+    points: [{ positions: joints.slice(), time_from_start: { sec: 0, nsec: 50000000 } }]
+  };
+  armTopic.publish(msg);
+}
+
+/* UI helpers */
+function updateUI(){
+  const isDeg = document.getElementById('degToggle').checked;
+  for(let i=0;i<4;i++){
+    const val = isDeg ? (joints[i]*180/Math.PI) : joints[i];
+    document.getElementById('v'+i).innerText = val.toFixed(2);
+    const s = document.getElementById('s'+i);
+    if(s) s.value = joints[i];
+  }
+}
+
+function manualSet(i, v){
+  joints[i] = parseFloat(v);
+  updateUI();
+  publish();
+}
+
+function home(){ joints=[0,0,0,0]; vel=[0,0,0,0]; updateUI(); publish(); }
+function estop(){ estopActive = !estopActive; if(estopActive){ vel=[0,0,0,0]; document.getElementById('statusText').innerText='E-STOP'; document.getElementById('dot').style.background='#ef4444'; } else { document.getElementById('statusText').innerText = connected ? 'CONNECTED' : 'DISCONNECTED'; document.getElementById('dot').style.background = connected ? '#22c55e' : '#64748b'; } }
+
+/* convenience - update display initially */
+updateUI();
+updateCurrentUrlDisplay();
+</script>
+</body>
+</html>

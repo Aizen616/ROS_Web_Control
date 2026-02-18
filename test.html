@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ROSBridge Test</title>
+  <style>
+    body { font-family: sans-serif; background:#0b0f1a; color:#e2e8f0; padding:20px; }
+    #status { font-weight: bold; padding:8px 12px; border-radius:6px; display:inline-block; }
+    .connected { background:#22c55e; color:white; }
+    .error { background:#ef4444; color:white; }
+    .closed { background:#64748b; color:white; }
+  </style>
+</head>
+<body>
+
+<h2>ROSBridge Connection Test</h2>
+<p id="status" class="closed">Connecting...</p>
+
+<script src="https://cdn.jsdelivr.net/npm/roslib/build/roslib.min.js"></script>
+<script>
+function connectROS(){
+  const host = localStorage.getItem('ros_host') || '10.35.99.222';
+  const port = localStorage.getItem('ros_port') || '9090';
+  const url = `ws://${host}:${port}`;
+
+  const ros = new ROSLIB.Ros({ url });
+
+  const statusEl = document.getElementById("status");
+  statusEl.innerHTML = "CONNECTING...";
+  statusEl.className = "closed";
+
+  ros.on('connection', () => {
+    statusEl.innerHTML = "CONNECTED";
+    statusEl.className = "connected";
+  });
+
+  ros.on('error', (err) => {
+    statusEl.innerHTML = "ERROR";
+    statusEl.className = "error";
+    console.error("ROS connection error:", err);
+  });
+
+  ros.on('close', () => {
+    statusEl.innerHTML = "CLOSED";
+    statusEl.className = "closed";
+  });
+
+  return ros;
+}
+
+// auto-connect on page load
+let ros = connectROS();
+</script>
+
+</body>
+</html>
